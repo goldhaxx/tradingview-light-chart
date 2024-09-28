@@ -27,36 +27,61 @@ const Chart: React.FC = () => {
   const [priceData, setPriceData] = useState<PriceData[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<'Candlestick' | 'Line'>('Candlestick');
-  const [timeRange, setTimeRange] = useState<'1m' | '3m' | '5m' | '15m' | '30m' | '1h'>('1m');
+  const [timeRange, setTimeRange] = useState<'1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '1d'>('1m');
   const [dataFetched, setDataFetched] = useState(false);
 
-  useEffect(() => {
-    const fetchPriceData = async () => {
-      const supabase = createClient();
-      try {
-        const { data, error } = await supabase
-          .from('price_data')
-          .select('*')
-          .order('time', { ascending: true });
+  const fetchData = async (range: '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '1d') => {
+    const supabase = createClient();
+    try {
+      // Fetch all data without time range filtering
+      const { data, error } = await supabase
+        .from('price_data')
+        .select('*')
+        .order('time', { ascending: true });
 
-        if (error) {
-          console.error('Error fetching price data:', error);
-          setError('Failed to fetch price data. Please try again later.');
-        } else if (data && data.length > 0) {
-          console.log('Successfully fetched price data:', data.length, 'records');
-          setPriceData(data);
-          setDataFetched(true);
-        } else {
-          console.log('No data returned from Supabase');
-          setError('No price data available. Click to add sample data.');
-        }
+      if (error) {
+        throw error;
+      }
+
+      if (!data || data.length === 0) {
+        throw new Error('No data available in the database.');
+      }
+
+      // Transform data to match Lightweight Charts format
+      const candles = data.map((item: any) => ({
+        time: new Date(item.time).getTime() / 1000 as Time,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+      }));
+
+      const lines = data.map((item: any) => ({
+        time: new Date(item.time).getTime() / 1000 as Time,
+        value: item.close,
+      }));
+
+      return { candles, lines };
+    } catch (error) {
+      console.error('Error fetching or processing data:', error);
+      throw error;
+    }
+  };
+
+  // Initial data load
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const data = await fetchData(timeRange);
+        setPriceData(data.candles);
+        setDataFetched(true);
       } catch (error) {
-        console.error('Unexpected error while fetching price data:', error);
-        setError('An unexpected error occurred. Please try again later.');
+        console.error('Error loading initial data:', error);
+        setError(error instanceof Error ? error.message : 'Failed to load initial data. Please try again.');
       }
     };
 
-    fetchPriceData();
+    loadInitialData();
   }, []);
 
   const addSampleData = async () => {
@@ -104,6 +129,20 @@ const Chart: React.FC = () => {
       const chartOptions: ChartOptions = {
         width: chartContainerRef.current.clientWidth,
         height: 400,
+        overlayPriceScales: {
+          mode: 1, // Example value
+          invertScale: false,
+          alignLabels: true,
+          scaleMargins: {
+            top: 0.1,
+            bottom: 0.1,
+          },
+          borderVisible: true,
+          borderColor: '#000000',
+          entireTextOnly: false,
+          ticksVisible: true,
+          minimumWidth: 50,
+        },
         layout: {
           background: {
             type: ColorType.Solid,
@@ -301,94 +340,72 @@ const Chart: React.FC = () => {
 
   // Update time range
   useEffect(() => {
-    if (chartRef.current) {
-      fetchData(timeRange).then(data => {
-        candlestickSeriesRef.current?.setData(data.candles);
-        lineSeriesRef.current?.setData(data.lines);
-        chartRef.current?.timeScale().fitContent();
-      });
-    }
-  }, [timeRange]);
-
-  const fetchData = async (range: '1m' | '3m' | '5m' | '15m' | '30m' | '1h') => {
-    try {
-      const response = await fetch(`/api/data?range=${range}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+    const updateChartData = async () => {
+      if (chartRef.current) {
+        setError(null); // Clear any previous errors
+        try {
+          const data = await fetchData(timeRange);
+          candlestickSeriesRef.current?.setData(data.candles);
+          lineSeriesRef.current?.setData(data.lines);
+          chartRef.current?.timeScale().fitContent();
+        } catch (error) {
+          console.error('Error updating chart data:', error);
+          setError(error instanceof Error ? error.message : 'Failed to update chart data. Please try again.');
+        }
       }
-      const data = await response.json();
-      console.log('Fetched data:', data);
+    };
 
-      // Transform data to match Lightweight Charts format
-      const candles = data.candles.map((item: any) => ({
-        time: new Date(item.time).getTime() / 1000 as Time,
-        open: item.open,
-        high: item.high,
-        low: item.low,
-        close: item.close,
-      }));
-
-      const lines = data.lines.map((item: any) => ({
-        time: new Date(item.time).getTime() / 1000 as Time,
-        value: item.value,
-      }));
-
-      return { candles, lines };
-    } catch (error) {
-      console.error('Error fetching or processing data:', error);
-      return { candles: [], lines: [] };
-    }
-  };
+    updateChartData();
+  }, [timeRange]);
 
   return (
     <div>
-      {error ? (
-        <div className="flex flex-col items-center justify-center h-64">
-          <p className="text-red-500 mb-4">{error}</p>
-          {error.includes('No price data available') && (
-            <Button onClick={addSampleData}>Add Sample Data</Button>
-          )}
+      <div className={`p-4 ${theme === 'dark' ? 'bg-[#131722]' : 'bg-white'}`}>
+        {/* Chart Type Selector */}
+        <div className="mb-4">
+          <label className={`mr-2 ${theme === 'dark' ? 'text-white' : 'text-black'}`}>Select Chart Type: </label>
+          <select
+            value={chartType}
+            onChange={(e) => setChartType(e.target.value as 'Candlestick' | 'Line')}
+            className={`p-2 rounded ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-black'}`}
+          >
+            <option value="Candlestick">Candlestick</option>
+            <option value="Line">Line</option>
+          </select>
         </div>
-      ) : (
-        <div className={`p-4 ${theme === 'dark' ? 'bg-gray-900' : 'bg-white'}`}>
-          {/* Chart Type Selector */}
-          <div className="mb-4">
-            <label className={`mr-2 ${theme === 'dark' ? 'text-white' : 'text-black'}`}>Select Chart Type: </label>
-            <select
-              value={chartType}
-              onChange={(e) => setChartType(e.target.value as 'Candlestick' | 'Line')}
-              className={`p-2 rounded ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-black'}`}
-            >
-              <option value="Candlestick">Candlestick</option>
-              <option value="Line">Line</option>
-            </select>
-          </div>
 
-          {/* Range Switcher */}
-          <div className="mb-4">
-            <label className={`mr-2 ${theme === 'dark' ? 'text-white' : 'text-black'}`}>Select Time Range: </label>
-            <select
-              value={timeRange}
-              onChange={(e) => setTimeRange(e.target.value as '1m' | '3m' | '5m' | '15m' | '30m' | '1h')}
-              className={`p-2 rounded ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-black'}`}
-            >
-              <option value="1m">1 Minute</option>
-              <option value="3m">3 Minutes</option>
-              <option value="5m">5 Minutes</option>
-              <option value="15m">15 Minutes</option>
-              <option value="30m">30 Minutes</option>
-              <option value="1h">1 Hour</option>
-            </select>
-          </div>
-
-          {/* Chart Container */}
-          <div 
-            ref={chartContainerRef} 
-            className={`border ${theme === 'dark' ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-100'}`}
-            style={{ minHeight: '400px' }} 
-          />
+        {/* Range Switcher */}
+        <div className="mb-4">
+          <label className={`mr-2 ${theme === 'dark' ? 'text-white' : 'text-black'}`}>Select Time Range: </label>
+          <select
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value as '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '1d')}
+            className={`p-2 rounded ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-black'}`}
+          >
+            <option value="1m">1 Minute</option>
+            <option value="3m">3 Minutes</option>
+            <option value="5m">5 Minutes</option>
+            <option value="15m">15 Minutes</option>
+            <option value="30m">30 Minutes</option>
+            <option value="1h">1 Hour</option>
+            <option value="1d">1 Day</option>
+          </select>
         </div>
-      )}
+
+        {/* Error Display */}
+        {error && (
+          <div className="text-red-500 mb-4">
+            {error}
+          </div>
+        )}
+
+        {/* Chart Container */}
+        <div 
+          ref={chartContainerRef} 
+          className={`border ${theme === 'dark' ? 'border-[#363c4e] bg-[#131722]' : 'border-gray-300 bg-white'}`}
+          style={{ minHeight: '400px' }} 
+        />
+      </div>
     </div>
   );
 };
