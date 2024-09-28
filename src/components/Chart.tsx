@@ -285,12 +285,8 @@ const Chart: React.FC = () => {
         wickUpColor: isDarkMode ? '#26a69a' : '#53B987',
         wickDownColor: isDarkMode ? '#ef5350' : '#EB5757',
       });
-      lineSeriesRef.current = chartRef.current.addLineSeries({
-        color: isDarkMode ? '#2962FF' : '#2962FF',
-        lineWidth: 2,
-      });
 
-      // Set data directly from priceData
+      // Set data only for candlestick series
       const formattedData = priceData.map(item => ({
         time: new Date(item.time).getTime() / 1000 as Time,
         open: item.open,
@@ -301,14 +297,6 @@ const Chart: React.FC = () => {
 
       console.log('Setting candlestick data:', formattedData);
       candlestickSeriesRef.current.setData(formattedData);
-
-      const lineData = priceData.map(item => ({
-        time: new Date(item.time).getTime() / 1000 as Time,
-        value: item.close,
-      }));
-
-      console.log('Setting line data:', lineData);
-      lineSeriesRef.current.setData(lineData);
 
       chartRef.current.timeScale().fitContent();
 
@@ -327,16 +315,47 @@ const Chart: React.FC = () => {
 
   // Update chart type
   useEffect(() => {
-    if (candlestickSeriesRef.current && lineSeriesRef.current) {
+    if (chartRef.current) {
       if (chartType === 'Candlestick') {
-        candlestickSeriesRef.current.applyOptions({ visible: true });
-        lineSeriesRef.current.applyOptions({ visible: false });
+        if (!candlestickSeriesRef.current) {
+          candlestickSeriesRef.current = chartRef.current.addCandlestickSeries({
+            upColor: theme === 'dark' ? '#26a69a' : '#53B987',
+            downColor: theme === 'dark' ? '#ef5350' : '#EB5757',
+            borderVisible: false,
+            wickUpColor: theme === 'dark' ? '#26a69a' : '#53B987',
+            wickDownColor: theme === 'dark' ? '#ef5350' : '#EB5757',
+          });
+          candlestickSeriesRef.current.setData(priceData.map(item => ({
+            time: new Date(item.time).getTime() / 1000 as Time,
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+          })));
+        }
+        if (lineSeriesRef.current) {
+          chartRef.current.removeSeries(lineSeriesRef.current);
+          lineSeriesRef.current = null;
+        }
       } else {
-        candlestickSeriesRef.current.applyOptions({ visible: false });
-        lineSeriesRef.current.applyOptions({ visible: true });
+        if (!lineSeriesRef.current) {
+          lineSeriesRef.current = chartRef.current.addLineSeries({
+            color: theme === 'dark' ? '#2962FF' : '#2962FF',
+            lineWidth: 2,
+          });
+          lineSeriesRef.current.setData(priceData.map(item => ({
+            time: new Date(item.time).getTime() / 1000 as Time,
+            value: item.close,
+          })));
+        }
+        if (candlestickSeriesRef.current) {
+          chartRef.current.removeSeries(candlestickSeriesRef.current);
+          candlestickSeriesRef.current = null;
+        }
       }
+      chartRef.current.timeScale().fitContent();
     }
-  }, [chartType]);
+  }, [chartType, theme, priceData]);
 
   // Update time range
   useEffect(() => {
